@@ -3,7 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
+	"html/template"
 	"log"
 	"net/http"
 	"strconv"
@@ -22,13 +22,25 @@ func (app *application) home(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fmt.Fprintf(w, "<html><head><title>Reading List</title></head><body><h1>Reading List</h1><ul>")
-
-	for _, book := range *books {
-		fmt.Fprintf(w, "<li>%s (%d)</li>", book.Title, book.Pages)
+	files := []string{
+		"./ui/html/base.html",
+		"./ui/html/partials/nav.html",
+		"./ui/html/pages/home.html",
 	}
 
-	fmt.Fprint(w, "</ul></body></html>")
+	ts, err := template.ParseFiles(files...)
+	if err != nil {
+		log.Print(err.Error())
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	err = ts.ExecuteTemplate(w, "base", books)
+	if err != nil {
+		log.Print(err.Error())
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
 }
 
 func (app *application) bookView(w http.ResponseWriter, r *http.Request) {
@@ -44,7 +56,28 @@ func (app *application) bookView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fmt.Fprintf(w, "%s (%d)\n", book.Title, book.Pages)
+	files := []string{
+		"./ui/html/base.html",
+		"./ui/html/partials/nav.html",
+		"./ui/html/pages/view.html",
+	}
+
+	// Used to convert comma-separated genres to a slice within the template.
+	funcs := template.FuncMap{"join": strings.Join}
+
+	ts, err := template.New("showBook").Funcs(funcs).ParseFiles(files...)
+	if err != nil {
+		log.Print(err.Error())
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	err = ts.ExecuteTemplate(w, "base", book)
+	if err != nil {
+		log.Print(err.Error())
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
 }
 
 func (app *application) bookCreate(w http.ResponseWriter, r *http.Request) {
@@ -60,48 +93,59 @@ func (app *application) bookCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (app *application) bookCreateForm(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintf(w, "<html><head><title>Create Book</title></head>"+
-		"<body><h1>Create Book</h1><form action=\"/book/create\" method=\"post\">"+
-		"<label for=\"title\">Title</label><input type=\"text\" name=\"title\" id=\"title\">"+
-		"<label for=\"pages\">Pages</label><input type=\"text\" name=\"pages\" id=\"pages\">"+
-		"<label for=\"published\">Published</label><input type=\"text\" name=\"published\" id=\"published\">"+
-		"<label for=\"genres\">Genres</label><input type=\"text\" name=\"genres\" id=\"genres\">"+
-		"<label for=\"rating\">Rating</label><input type=\"number\" step=\"0.1\" name=\"rating\" id=\"rating\">"+
-		"<button type\"submit\">Create</button></form></body></html>")
+	files := []string{
+		"./ui/html/base.html",
+		"./ui/html/partials/nav.html",
+		"./ui/html/pages/create.html",
+	}
+
+	ts, err := template.ParseFiles(files...)
+	if err != nil {
+		log.Print(err.Error())
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	err = ts.ExecuteTemplate(w, "base", nil)
+	if err != nil {
+		log.Print(err.Error())
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
 }
 
 func (app *application) bookCreateProcess(w http.ResponseWriter, r *http.Request) {
-	title := r.PostFormValue("title")
-	if title == "" {
-		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
-		return
-	}
-
-	pages, err := strconv.Atoi(r.PostFormValue("pages"))
-	if err != nil || pages < 1 {
-		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
-		return
-	}
-
-	published, err := strconv.Atoi(r.PostFormValue("published"))
-	if err != nil || published < 1 {
-		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
-		return
-	}
-
-	genres := strings.Split(r.PostFormValue("genres"), " ")
-
-	ratingFloat, err := strconv.ParseFloat(r.PostFormValue("rating"), 32)
+	err := r.ParseForm()
 	if err != nil {
+		log.Println(err)
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
-	rating := float32(ratingFloat)
+
+	title := r.PostForm.Get("title")
+
+	pages, err := strconv.Atoi(r.PostForm.Get("pages"))
+	if err != nil {
+		log.Println(err)
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		return
+	}
+
+	published, err := strconv.Atoi(r.PostForm.Get("published"))
+	if err != nil {
+		log.Println(err)
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		return
+	}
+
+	genres := strings.Split(r.PostForm.Get("genres"), ",")
+
+	rating, err := strconv.ParseFloat(r.PostForm.Get("rating"), 32)
 
 	book := struct {
 		Title     string   `json:"title"`
 		Pages     int      `json:"pages"`
-		Published int      `json:"publised"`
+		Published int      `json:"published"`
 		Genres    []string `json:"genres"`
 		Rating    float32  `json:"rating"`
 	}{
@@ -109,7 +153,7 @@ func (app *application) bookCreateProcess(w http.ResponseWriter, r *http.Request
 		Pages:     pages,
 		Published: published,
 		Genres:    genres,
-		Rating:    rating,
+		Rating:    float32(rating),
 	}
 
 	data, err := json.Marshal(book)
